@@ -1,0 +1,13 @@
+Create conda environment using environment.yml
+conda env create --file environment.yml
+
+activate the environment, then run jupyter lab
+conda activate eecs6322fp
+jupyter lab
+
+
+If code says cuda is not available and you have an Nvidia gpu, try:
+run:
+conda uninstall pytorch torchvision cudatoolkit -c pytorch
+then run:
+conda install pytorch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1  pytorch-cuda=11.8 -c pytorch -c nvidia

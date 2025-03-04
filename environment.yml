@@ -1,0 +1,14 @@
+name: eecs6322fp
+channels:
+  - pytorch
+  - defaults
+dependencies:
+  - cudatoolkit
+  - pytorch
+  - torchvision
+  - torchaudio
+  - numpy
+  - matplotlib
+  - notebook
+  - pip:
+      - torchsummary
