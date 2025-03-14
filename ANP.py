@@ -25,6 +25,12 @@ class ANPWrapper:
         self.bias_perturbations = {}     # xi
         self.weight_masks = {}           # m
 
+        # a dict of dicts for mapping each layer (by name) to its set of extra params (delta, xi, m)
+        self.layer_extra_params = {}
+        # populate it
+        for name, layer in res18.named_modules():
+            self.layer_extra_params[name] = {}
+
         self.backup = {}
 
         # set loss function
@@ -42,6 +48,9 @@ class ANPWrapper:
 
         # optimizer for weight masks
         self.weight_masks_optimizer = torch.optim.SGD(self.weight_masks,lr=self.lr)
+
+        # add the overwriting forward hooks to the layers for perturbation
+        self._add_hooks()
 
     def perturb_step(self, inputs, label):
         '''
@@ -87,6 +96,7 @@ class ANPWrapper:
 
         # then we step the optimizer to change the weight mask tensors
         self.weight_masks_optimizer.step()
+        self._clamp_weight_mask_tensors()
 
         # TODO: finish implementing the ANP step method
         
@@ -128,6 +138,7 @@ class ANPWrapper:
         for name, param in self.model.named_parameters():
             if name.endswith('weight'):
                 self.weight_masks[name] = torch.ones_like(param)
+                self.layer_extra_params[name.replace('.weight', '')]['m'] = self.weight_masks[name]
                 
     def _create_perturbation_tensors(self):
         '''
@@ -136,8 +147,10 @@ class ANPWrapper:
         for name, param in self.model.named_parameters():
             if name.endswith('weight'):
                 self.weight_perturbations[name] = torch.zeros_like(param)
+                self.layer_extra_params[name.replace('.weight', '')]['delta'] = self.weight_perturbations[name]
             elif name.endswith('bias'):
                 self.bias_perturbations[name] = torch.zeros_like(param)
+                self.layer_extra_params[name.replace('.bias', '')]['xi'] = self.bias_perturbations[name]
 
     def _make_new_perturbation_values(self):
         '''
@@ -181,6 +194,14 @@ class ANPWrapper:
         for name in self.bias_perturbations:
             self.bias_perturbations[name] += self.ep * self.bias_perturbations[name].grad.sign()
             self.bias_perturbations[name].clamp(-self.ep, self.ep)
+
+    def _clamp_weight_mask_tensors(self):
+        '''
+        clamp weight mask tensors (m) to between 0 and 1
+        called after every optimizer step to change m
+        '''
+        for name in self.weight_masks:
+            self.weight_masks[name].clamp(0.0, 1.0)
     
     def _generate_overwrite_hook(self, layer_type, **kwargs):
         '''
@@ -222,5 +243,12 @@ class ANPWrapper:
         add the overwriting hooks to the modules (layers) of the model
         '''
         for name, layer in self.model.named_modules():
-            forward_hook = self._generate_overwrite_hook(type(layer), )
-            layer.register_forward_hook(forward_hook)
+            # extra params registered for this layer
+            extra_params = self.layer_extra_params[name]
+            if len(extra_params) == 0:
+                continue
+            # generate forward hook function and add
+            # if this layer is a layer type thatwould need to use one
+            forward_hook = self._generate_overwrite_hook(type(layer), **extra_params)
+            if forward_hook is not None:
+                layer.register_forward_hook(forward_hook)
