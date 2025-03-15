@@ -28,7 +28,7 @@ class ANPWrapper:
         # a dict of dicts for mapping each layer (by name) to its set of extra params (delta, xi, m)
         self.layer_extra_params = {}
         # populate it
-        for name, layer in res18.named_modules():
+        for name, layer in self.model.named_modules():
             self.layer_extra_params[name] = {}
 
         self.backup = {}
@@ -46,11 +46,16 @@ class ANPWrapper:
         # we need to accumulate i.e. add the gradient of weight masks tensors (m) over the two modes
         self.use_perturbation = True
 
-        # optimizer for weight masks
-        self.weight_masks_optimizer = torch.optim.SGD(self.weight_masks,lr=self.lr)
-
         # add the overwriting forward hooks to the layers for perturbation
+        self.not_perturbed_layers = {}
         self._add_hooks()
+
+        # clean up the unused extra params tensors created but not linked to the model
+        self._clear_unused_extra_parameters()
+
+        pms = [self.weight_masks[k] for k in self.weight_masks]
+        # optimizer for weight masks
+        self.weight_masks_optimizer = torch.optim.SGD(pms, lr=self.lr, momentum=0.9)
 
     def perturb_step(self, inputs, label):
         '''
@@ -68,10 +73,10 @@ class ANPWrapper:
         loss.backward()
         
         # maximize perturbation parameter for this batch step
+        self._set_perturbation_tensor_require_grad(False)
         self._maximize_perturbations()
         # clear their grad
         self._clear_perturbation_tensor_grad()
-        self._set_perturbation_tensor_require_grad(False)
 
         weight_mask_loss = 0
         
@@ -189,9 +194,19 @@ class ANPWrapper:
         optimizing pruning flag tensors within each batch
         '''
         for name in self.weight_perturbations:
+            # some tensors are not linked to the model, we skip them
+            if self.weight_perturbations[name].grad is None:
+                print(f'extra parameter with no .grad but not removed found, name: {name}')
+                continue
+            
             self.weight_perturbations[name] += self.ep * self.weight_perturbations[name].grad.sign()
             self.weight_perturbations[name].clamp(-self.ep, self.ep)
         for name in self.bias_perturbations:
+            # some tensors are not linked to the model, we skip them
+            if self.bias_perturbations[name].grad is None:
+                print(f'extra parameter with no .grad but not removed found, name: {name}')
+                continue
+            
             self.bias_perturbations[name] += self.ep * self.bias_perturbations[name].grad.sign()
             self.bias_perturbations[name].clamp(-self.ep, self.ep)
 
@@ -252,3 +267,32 @@ class ANPWrapper:
             forward_hook = self._generate_overwrite_hook(type(layer), **extra_params)
             if forward_hook is not None:
                 layer.register_forward_hook(forward_hook)
+            else:
+                self.not_perturbed_layers[name] = True
+
+    def _clear_unused_extra_parameters(self):
+        '''
+        clean up some tensors that are created but not used
+        '''
+        remove_list = []
+        for name in self.weight_masks:
+            if name.replace('.weight', '').replace('.bias', '') in self.not_perturbed_layers:
+                remove_list.append(name)
+        for r in remove_list:
+            self.weight_masks.pop(r)
+
+        remove_list = []
+        for name in self.weight_perturbations:
+            if name.replace('.weight', '').replace('.bias', '') in self.not_perturbed_layers:
+                remove_list.append(name)
+        for r in remove_list:
+            self.weight_perturbations.pop(r)
+
+        remove_list = []
+        for name in self.bias_perturbations:
+            if name.replace('.weight', '').replace('.bias', '') in self.not_perturbed_layers:
+                remove_list.append(name)
+        for r in remove_list:
+            self.bias_perturbations.pop(r)
+        pass
+        
