@@ -225,6 +225,7 @@ class ANPWrapper:
         '''
         if layer_type == torch.nn.modules.linear.Linear:
             def fc_forward_hook(module, i, o):
+                print('fc forward hook called, use_perturbation:', self.use_perturbation)
                 # change the forward call
                 if self.use_perturbation:
                     return F.linear(i[0], (kwargs['m'] + kwargs['delta']) * module.weight, (1 + kwargs['xi']) * module.bias)
@@ -234,6 +235,8 @@ class ANPWrapper:
         elif layer_type == torch.nn.modules.conv.Conv2d:
             if 'xi' in kwargs:
                 def conv2d_forward_hook(module, i, o):
+                    print('conv2d forward hook called, use_perturbation:', self.use_perturbation)
+                    
                     # change the forward call
                     if self.use_perturbation:
                         return module._conv_forward(i[0], (kwargs['m'] + kwargs['delta']) * module.weight, (1 + kwargs['xi']) * module.bias)
@@ -241,6 +244,8 @@ class ANPWrapper:
                         return module._conv_forward(i[0], (kwargs['m']) * module.weight, module.bias)
             else:
                 def conv2d_forward_hook(module, i, o):
+                    print('conv2d forward hook called, use_perturbation:', self.use_perturbation)
+                    
                     # change the forward call
                     if self.use_perturbation:
                         return module._conv_forward(i[0], (kwargs['m'] + kwargs['delta']) * module.weight, module.bias)
