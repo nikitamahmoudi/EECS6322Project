@@ -79,6 +79,9 @@ class ANPWrapper:
         # clear their grad
         self._clear_perturbation_tensor_grad()
 
+        # debug print
+        # self._show_perturbations_tensors_minmax()
+
         # print('weight mask phase (with perturbation)')
         weight_mask_loss = 0
         
@@ -108,6 +111,9 @@ class ANPWrapper:
         # then we step the optimizer to change the weight mask tensors
         self.weight_masks_optimizer.step()
         self._clamp_weight_mask_tensors()
+
+        # debug print
+        # self._show_masks_tensors_minmax()
 
         # TODO: finish implementing the ANP step method
         
@@ -206,24 +212,25 @@ class ANPWrapper:
                 print(f'extra parameter with no .grad but not removed found, name: {name}')
                 continue
             
-            self.weight_perturbations[name] += self.ep * self.weight_perturbations[name].grad.sign()
-            self.weight_perturbations[name].clamp(-self.ep, self.ep)
+            self.weight_perturbations[name] += self.weight_perturbations[name].grad.detach().sign() * self.ep
+            self.weight_perturbations[name].clamp_(-self.ep, self.ep)
         for name in self.bias_perturbations:
             # some tensors are not linked to the model, we skip them
             if self.bias_perturbations[name].grad is None:
                 print(f'extra parameter with no .grad but not removed found, name: {name}')
                 continue
             
-            self.bias_perturbations[name] += self.ep * self.bias_perturbations[name].grad.sign()
-            self.bias_perturbations[name].clamp(-self.ep, self.ep)
+            self.bias_perturbations[name] += self.bias_perturbations[name].grad.detach().sign() * self.ep
+            self.bias_perturbations[name].clamp_(-self.ep, self.ep)
 
     def _clamp_weight_mask_tensors(self):
         '''
         clamp weight mask tensors (m) to between 0 and 1
         called after every optimizer step to change m
         '''
-        for name in self.weight_masks:
-            self.weight_masks[name].clamp(0.0, 1.0)
+        with torch.no_grad():
+            for name in self.weight_masks:
+                self.weight_masks[name].clamp_(0.0, 1.0)
     
     def _generate_overwrite_hook(self, layer_type, **kwargs):
         '''
@@ -310,3 +317,9 @@ class ANPWrapper:
 
     def _show_masks_tensors_grad(self):
         print('weight masks grad status:', {name: self.weight_masks[name].grad is None for name in self.weight_masks})
+
+    def _show_masks_tensors_minmax(self):
+        print('weight masks min max:', {name: (self.weight_masks[name].min().item(), self.weight_masks[name].max().item()) for name in self.weight_masks})
+
+    def _show_perturbations_tensors_minmax(self):
+        print('weight perturbations min max:', {name: (self.weight_perturbations[name].min().item(), self.weight_perturbations[name].max().item()) for name in self.weight_perturbations})
