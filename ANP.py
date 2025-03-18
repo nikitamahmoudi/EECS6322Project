@@ -61,6 +61,7 @@ class ANPWrapper:
         '''
         1 step of perturbation with dataset batch given
         '''
+        # print('perturbation phase')
         # initialize perturbation values
         self._make_new_perturbation_values()
         # set flags so we can get the gradient of loss w.r.t. perturbations
@@ -78,6 +79,7 @@ class ANPWrapper:
         # clear their grad
         self._clear_perturbation_tensor_grad()
 
+        # print('weight mask phase (with perturbation)')
         weight_mask_loss = 0
         
         # zero grads here since they would have accumulated in the previous loss.backward() call
@@ -89,7 +91,8 @@ class ANPWrapper:
         weight_mask_loss += loss.item()
         # and backward
         loss.backward()
-        
+
+        # print('weight mask phase (without perturbation)')
         # then compute alpha * L(m * w, b)
         # with perturbation not present
         self.use_perturbation = False
@@ -99,6 +102,9 @@ class ANPWrapper:
         # and backward, while gradients are accumulated in m
         loss.backward()
 
+        # debug print
+        # self._show_masks_tensors_grad()
+        
         # then we step the optimizer to change the weight mask tensors
         self.weight_masks_optimizer.step()
         self._clamp_weight_mask_tensors()
@@ -144,6 +150,7 @@ class ANPWrapper:
             if name.endswith('weight'):
                 self.weight_masks[name] = torch.ones_like(param)
                 self.layer_extra_params[name.replace('.weight', '')]['m'] = self.weight_masks[name]
+                self.weight_masks[name].requires_grad = True
                 
     def _create_perturbation_tensors(self):
         '''
@@ -225,7 +232,7 @@ class ANPWrapper:
         '''
         if layer_type == torch.nn.modules.linear.Linear:
             def fc_forward_hook(module, i, o):
-                print('fc forward hook called, use_perturbation:', self.use_perturbation)
+                # print('fc forward hook called, use_perturbation:', self.use_perturbation)
                 # change the forward call
                 if self.use_perturbation:
                     return F.linear(i[0], (kwargs['m'] + kwargs['delta']) * module.weight, (1 + kwargs['xi']) * module.bias)
@@ -235,7 +242,7 @@ class ANPWrapper:
         elif layer_type == torch.nn.modules.conv.Conv2d:
             if 'xi' in kwargs:
                 def conv2d_forward_hook(module, i, o):
-                    print('conv2d forward hook called, use_perturbation:', self.use_perturbation)
+                    # print('conv2d forward hook called, use_perturbation:', self.use_perturbation)
                     
                     # change the forward call
                     if self.use_perturbation:
@@ -244,7 +251,7 @@ class ANPWrapper:
                         return module._conv_forward(i[0], (kwargs['m']) * module.weight, module.bias)
             else:
                 def conv2d_forward_hook(module, i, o):
-                    print('conv2d forward hook called, use_perturbation:', self.use_perturbation)
+                    # print('conv2d forward hook (no bias) called, use_perturbation:', self.use_perturbation)
                     
                     # change the forward call
                     if self.use_perturbation:
@@ -300,4 +307,6 @@ class ANPWrapper:
         for r in remove_list:
             self.bias_perturbations.pop(r)
         pass
-        
+
+    def _show_masks_tensors_grad(self):
+        print('weight masks grad status:', {name: self.weight_masks[name].grad is None for name in self.weight_masks})
