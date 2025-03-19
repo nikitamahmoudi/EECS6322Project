@@ -154,7 +154,13 @@ class ANPWrapper:
         '''
         for name, param in self.model.named_parameters():
             if name.endswith('weight'):
-                self.weight_masks[name] = torch.ones_like(param)
+                # self.weight_masks[name] = torch.ones_like(param)
+
+                # create a mask for number of neurons (not individual weights!)
+                t_dim = len(param.shape)
+                n_dim = [param.shape[0],] + [1,] * (t_dim - 1)
+                self.weight_masks[name] = torch.ones(n_dim, device=param.device)
+                
                 self.layer_extra_params[name.replace('.weight', '')]['m'] = self.weight_masks[name]
                 self.weight_masks[name].requires_grad = True
                 
@@ -164,10 +170,22 @@ class ANPWrapper:
         '''
         for name, param in self.model.named_parameters():
             if name.endswith('weight'):
-                self.weight_perturbations[name] = torch.zeros_like(param)
+                # self.weight_perturbations[name] = torch.zeros_like(param)
+
+                # create a perturbation parameter for number of neurons (not individual weights!)
+                t_dim = len(param.shape)
+                n_dim = [param.shape[0],] + [1,] * (t_dim - 1)
+                self.weight_perturbations[name] = torch.zeros(n_dim, device=param.device)
+                
                 self.layer_extra_params[name.replace('.weight', '')]['delta'] = self.weight_perturbations[name]
             elif name.endswith('bias'):
-                self.bias_perturbations[name] = torch.zeros_like(param)
+                # self.bias_perturbations[name] = torch.zeros_like(param)
+
+                # create a perturbation parameter for number of neurons (not individual weights!)
+                t_dim = len(param.shape)
+                n_dim = [param.shape[0],] + [1,] * (t_dim - 1)
+                self.bias_perturbations[name] = torch.zeros(n_dim, device=param.device)
+                
                 self.layer_extra_params[name.replace('.bias', '')]['xi'] = self.bias_perturbations[name]
 
     def _make_new_perturbation_values(self):
@@ -212,7 +230,7 @@ class ANPWrapper:
                 print(f'extra parameter with no .grad but not removed found, name: {name}')
                 continue
             
-            self.weight_perturbations[name] += self.weight_perturbations[name].grad.detach().sign() * self.ep
+            self.weight_perturbations[name] += self.weight_perturbations[name].grad.detach().sign() * self.ep * 2
             self.weight_perturbations[name].clamp_(-self.ep, self.ep)
         for name in self.bias_perturbations:
             # some tensors are not linked to the model, we skip them
@@ -220,7 +238,7 @@ class ANPWrapper:
                 print(f'extra parameter with no .grad but not removed found, name: {name}')
                 continue
             
-            self.bias_perturbations[name] += self.bias_perturbations[name].grad.detach().sign() * self.ep
+            self.bias_perturbations[name] += self.bias_perturbations[name].grad.detach().sign() * self.ep * 2
             self.bias_perturbations[name].clamp_(-self.ep, self.ep)
 
     def _clamp_weight_mask_tensors(self):
@@ -268,8 +286,70 @@ class ANPWrapper:
             return conv2d_forward_hook
         elif layer_type == torch.nn.modules.batchnorm.BatchNorm2d:
             def bn2d_forward_hook(module, i, o):
-                pass
-            return None
+                '''
+                the entire BatchNorm2d.forward() method
+                copied from:
+                https://github.com/pytorch/pytorch/blob/v2.6.0/torch/nn/modules/batchnorm.py
+                https://github.com/pytorch/pytorch/blob/v2.5.1/torch/nn/modules/batchnorm.py
+                and modified
+                '''
+
+                # exponential_average_factor is set to self.momentum
+                # (when it is available) only so that it gets updated
+                # in ONNX graph when this node is exported to ONNX.
+                if module.momentum is None:
+                    exponential_average_factor = 0.0
+                else:
+                    exponential_average_factor = module.momentum
+
+                if module.training and module.track_running_stats:
+                    # TODO: if statement only here to tell the jit to skip emitting this when it is None
+                    if module.num_batches_tracked is not None:  # type: ignore[has-type]
+                        module.num_batches_tracked.add_(1)  # type: ignore[has-type]
+                        if module.momentum is None:  # use cumulative moving average
+                            exponential_average_factor = 1.0 / float(module.num_batches_tracked)
+                        else:  # use exponential moving average
+                            exponential_average_factor = module.momentum
+
+                r"""
+                Decide whether the mini-batch stats should be used for normalization rather than the buffers.
+                Mini-batch stats are used in training mode, and in eval mode when buffers are None.
+                """
+                if module.training:
+                    bn_training = True
+                else:
+                    bn_training = (module.running_mean is None) and (module.running_var is None)
+
+                r"""
+                Buffers are only updated if they are to be tracked and we are in training mode. Thus they only need to be
+                passed when the update should occur (i.e. in training mode when they are tracked), or when buffer stats are
+                used for normalization (i.e. in eval mode when buffers are not None).
+                """
+                if self.use_perturbation:
+                    return F.batch_norm(
+                        i[0],
+                        # If buffers are not to be tracked, ensure that they won't be updated
+                        module.running_mean if not module.training or module.track_running_stats else None,
+                        module.running_var if not module.training or module.track_running_stats else None,
+                        (kwargs['m'] + kwargs['delta']) * module.weight,
+                        (1 + kwargs['xi']) * module.bias,
+                        bn_training,
+                        exponential_average_factor,
+                        module.eps,
+                    )
+                else:
+                    return F.batch_norm(
+                        i[0],
+                        # If buffers are not to be tracked, ensure that they won't be updated
+                        module.running_mean if not module.training or module.track_running_stats else None,
+                        module.running_var if not module.training or module.track_running_stats else None,
+                        (kwargs['m']) * module.weight,
+                        module.bias,
+                        bn_training,
+                        exponential_average_factor,
+                        module.eps,
+                    )
+            return bn2d_forward_hook
         return None
 
     def _add_hooks(self):
