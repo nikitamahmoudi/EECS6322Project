@@ -46,6 +46,9 @@ class ANPWrapper:
         # we need to accumulate i.e. add the gradient of weight masks tensors (m) over the two modes
         self.use_perturbation = True
 
+        # hook handles, for removing them later
+        self.hook_handles = []
+
         # add the overwriting forward hooks to the layers for perturbation
         self.not_perturbed_layers = {}
         self._add_hooks()
@@ -365,10 +368,33 @@ class ANPWrapper:
             # if this layer is a layer type thatwould need to use one
             forward_hook = self._generate_overwrite_hook(type(layer), **extra_params)
             if forward_hook is not None:
-                layer.register_forward_hook(forward_hook)
+                handle = layer.register_forward_hook(forward_hook)
+                # keep track of hook handles to remove them later if needed
+                self.hook_handles.append(handle)
             else:
                 self.not_perturbed_layers[name] = True
 
+    def _remove_hooks(self):
+        '''
+        remove all hooks
+        used after the perturbation training has completed 
+        and we want to consolidate which neurons to remove
+        '''
+        for handle in self.hook_handles:
+            handle.remove()
+
+    def _prune_neurons(self, threshold):
+        '''
+        after ANP training completed, we will prune neurons that needs to be pruned
+        all elements in the tensors in self.weight_masks have value in [0, 1]
+        we prune the neurons per a threshold (paper states they just used 0.2)
+        '''
+        with torch.no_grad():
+            for name, param in self.model.named_parameters():
+                if name.endswith('weight'):
+                    if name in self.weight_masks:
+                        param.copy_(param * (self.weight_masks[name] >= threshold))
+    
     def _clear_unused_extra_parameters(self):
         '''
         clean up some tensors that are created but not used
