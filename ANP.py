@@ -81,6 +81,8 @@ class ANPWrapper:
         self._maximize_perturbations()
         # clear their grad
         self._clear_perturbation_tensor_grad()
+        # and clear the grad cached in the model
+        self.model.zero_grad()
 
         # debug print
         # self._show_perturbations_tensors_minmax()
@@ -114,6 +116,9 @@ class ANPWrapper:
         # then we step the optimizer to change the weight mask tensors
         self.weight_masks_optimizer.step()
         self._clamp_weight_mask_tensors()
+        
+        # clear the grad cached in the model again
+        self.model.zero_grad()
 
         # debug print
         # self._show_masks_tensors_minmax()
