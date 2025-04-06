@@ -5,7 +5,7 @@ from torch.nn import functional as F
 import numpy as np
 
 class ANPWrapper:
-    def __init__(self, model, tradeoff, lr, ep, loss_fn=None):
+    def __init__(self, model, tradeoff, lr, ep, loss_fn=None, anp_steps=1):
         '''
         creates an ANP system, an object that wraps around a pytorch model
         tradeoff: tradeoff coefficient, 'alpha' in paper
@@ -19,6 +19,9 @@ class ANPWrapper:
         self.alpha = tradeoff
         self.lr = lr
         self.ep = ep
+
+        # how many steps to repeat the loss maximization
+        self.anp_steps = anp_steps
 
         # the perturbation and masks used in the algorithm
         self.weight_perturbations = {}   # delta
@@ -69,20 +72,24 @@ class ANPWrapper:
         self._make_new_perturbation_values()
         # set flags so we can get the gradient of loss w.r.t. perturbations
         self.use_perturbation = True
-        self._set_perturbation_tensor_require_grad(True)
+
+        # repeat perturbation this many steps
+        for _ in range(self.anp_steps):
+            self._set_perturbation_tensor_require_grad(True)
+            
+            # perform prediction and compute loss, then backprop
+            pred = self.model(inputs)
+            loss = self.loss_fn(pred,label)
+            loss.backward()
         
-        # perform prediction and compute loss, then backprop
-        pred = self.model(inputs)
-        loss = self.loss_fn(pred,label)
-        loss.backward()
-        
-        # maximize perturbation parameter for this batch step
-        self._set_perturbation_tensor_require_grad(False)
-        self._maximize_perturbations()
-        # clear their grad
-        self._clear_perturbation_tensor_grad()
-        # and clear the grad cached in the model
-        self.model.zero_grad()
+            # maximize perturbation parameter for this batch step
+            self._set_perturbation_tensor_require_grad(False)
+            self._maximize_perturbations()
+            
+            # clear their grad
+            self._clear_perturbation_tensor_grad()
+            # and clear the grad cached in the model
+            self.model.zero_grad()
 
         # debug print
         # self._show_perturbations_tensors_minmax()
