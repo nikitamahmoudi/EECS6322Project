@@ -34,7 +34,9 @@ augment dataset
 '''
 
 # we use 0.9 of the whole dataset as the poisoned set
-poisoned_set_ratio = 0.9
+# poisoned_set_ratio = 0.9
+# use the very last 1% of train data for the 1% test
+poisoned_set_ratio = 0.99
 
 dataset_images = np.array([c[0] for c in cifar10_train])
 dataset_labels = np.array([c[1] for c in cifar10_train])
@@ -166,11 +168,11 @@ for step_amount in step_amounts:
         res18.load_state_dict(torch.load(f'saved_models/ResNet18-CIFAR10-backdoored-5-Epoch-200.pth'))
 
         # create ANP
-        anp_system = ANPWrapper(res18, tradeoff=0.2, lr=0.2, ep=0.1, anp_steps=step_amount)
+        anp_system = ANPWrapper(res18, tradeoff=0.2, lr=0.2, ep=0.4, anp_steps=step_amount)
         
         # train, record time
         start = time.time()
-        train_anp(anp_system, 50)
+        train_anp(anp_system, 500)
         end = time.time()
         elapsed = end - start
         
@@ -205,6 +207,6 @@ export to file
 import json
 
 stats_json = json.dumps(stats)
-savefile = open("experiment_stats_data-10percent_ep-0.1.json", "w")
+savefile = open("experiment_stats_data-1percent_ep-0.4.json", "w")
 savefile.write(stats_json)
 savefile.close()
