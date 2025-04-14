@@ -149,7 +149,8 @@ def test_clean_acc(model):
 '''
 now to run the experiment with 4 different step amounts each with 5 trials
 '''
-tradeoffs = np.linspace(0.0, 1.0, 11)
+tradeoff = 0.2
+epsilons = np.linspace(0.0, 1.0, 11)
 num_trials = 5
 
 # pruning threshold
@@ -161,7 +162,7 @@ step_amount = 1
 
 stats = {}
 
-for tradeoff in tradeoffs:
+for ep in epsilons:
     for trial_ct in range(num_trials):
         # create and load ResNet18
         num_classes = 10
@@ -170,7 +171,7 @@ for tradeoff in tradeoffs:
         res18.load_state_dict(torch.load(f'saved_models/ResNet18-CIFAR10-backdoored-5-Epoch-200.pth'))
 
         # create ANP
-        anp_system = ANPWrapper(res18, tradeoff=tradeoff, lr=0.2, ep=0.4, anp_steps=step_amount)
+        anp_system = ANPWrapper(res18, tradeoff=tradeoff, lr=0.2, ep=ep, anp_steps=step_amount)
         
         # train, record time
         start = time.time()
@@ -189,9 +190,9 @@ for tradeoff in tradeoffs:
         asr = test_backdoor_success(anp_system.model)
         acc = test_clean_acc(anp_system.model)
 
-        if tradeoff not in stats:
-            stats[tradeoff] = []
-        stats[tradeoff].append({"training_time": elapsed, "ASR": asr, "ACC": acc})
+        if ep not in stats:
+            stats[ep] = []
+        stats[ep].append({"training_time": elapsed, "ASR": asr, "ACC": acc})
 
 '''
 export to file
@@ -200,6 +201,6 @@ export to file
 import json
 
 stats_json = json.dumps(stats)
-savefile = open("experiment_stats_data-1percent_ep-0.4_threshold-0.4_different_tradeoffs.json", "w")
+savefile = open("experiment_stats_data-1percent_threshold-0.4_different_eps.json", "w")
 savefile.write(stats_json)
 savefile.close()
